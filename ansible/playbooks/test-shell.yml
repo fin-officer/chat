@@ -1,0 +1,77 @@
+---
+- name: Test Protocol Integration Shell Interface
+  hosts: all
+  become: false
+  vars:
+    llm_host: "http://localhost:11434"
+  tasks:
+    - name: Set up Python environment
+      pip:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - pexpect
+
+    - name: Test shell interface with basic commands
+      shell: |
+        python -c '
+import pexpect
+import sys
+
+child = pexpect.spawn("python -m protocol_integration.interfaces.shell.interactive --llm-host {{ llm_host }}")
+child.expect("protocol>")
+
+# Test listing protocols
+child.sendline("protocols")
+child.expect("Available Protocols")
+child.expect("protocol>")
+
+# Test activating a protocol
+child.sendline("activate chat")
+index = child.expect(["Error", "activated"])
+if index == 0:
+    print("Error activating chat protocol")
+    sys.exit(1)
+
+child.expect("protocol>")
+
+# Test sending a message
+child.sendline("send Hello, how are you?")
+index = child.expect(["Error", "Message sent"])
+if index == 0:
+    print("Error sending message")
+    sys.exit(1)
+
+child.expect("protocol>")
+
+# Test simulating a message
+child.sendline("simulate Hi there!")
+index = child.expect(["Error", "Simulated incoming message"])
+if index == 0:
+    print("Error simulating message")
+    sys.exit(1)
+
+child.expect("protocol>")
+
+# Deactivate protocol
+child.sendline("deactivate chat")
+index = child.expect(["Error", "deactivated"])
+if index == 0:
+    print("Error deactivating chat protocol")
+    sys.exit(1)
+
+child.expect("protocol>")
+
+# Exit shell
+child.sendline("exit")
+child.expect(pexpect.EOF)
+
+print("Shell interface tests passed")
+sys.exit(0)
+        '
+      register: shell_test
+      failed_when: shell_test.rc != 0
+
+    - name: Print shell test result
+      debug:
+        var: shell_test.stdout_lines

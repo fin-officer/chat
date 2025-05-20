@@ -1,0 +1,125 @@
+---
+- name: Test Protocol Integration MCP Interface
+  hosts: all
+  become: false
+  vars:
+    mcp_host: "localhost"
+    mcp_port: 8080
+  tasks:
+    - name: Set up Python environment
+      pip:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - websockets
+        - asyncio
+
+    - name: Test MCP WebSocket connection
+      shell: |
+        python -c '
+import asyncio
+import websockets
+import json
+import sys
+
+async def test_mcp():
+    uri = f"ws://{{ mcp_host }}:{{ mcp_port }}"
+    async with websockets.connect(uri) as websocket:
+        # Test list_protocols
+        await websocket.send(json.dumps({
+            "id": "1",
+            "action": "list_protocols"
+        }))
+        
+        response = await websocket.recv()
+        data = json.loads(response)
+        if "error" in data:
+            print(f"Error in list_protocols: {data.get(\"error\")}")
+            return False
+            
+        if "result" not in data or "protocols" not in data["result"]:
+            print("Invalid response format for list_protocols")
+            return False
+
+        # Test activate_protocol
+        await websocket.send(json.dumps({
+            "id": "2",
+            "action": "activate_protocol",
+            "protocol_name": "chat"
+        }))
+        
+        response = await websocket.recv()
+        data = json.loads(response)
+        if "error" in data:
+            print(f"Error in activate_protocol: {data.get(\"error\")}")
+            return False
+            
+        if "result" not in data or "protocol" not in data["result"] or data["result"]["protocol"]["status"] != "active":
+            print("Failed to activate protocol")
+            return False
+
+        # Test send_message
+        await websocket.send(json.dumps({
+            "id": "3",
+            "action": "send_message",
+            "content": "Hello, how are you?",
+            "protocol": "chat"
+        }))
+        
+        response = await websocket.recv()
+        data = json.loads(response)
+        if "error" in data:
+            print(f"Error in send_message: {data.get(\"error\")}")
+            return False
+            
+        if "result" not in data or "message_id" not in data["result"] or data["result"]["status"] != "queued":
+            print("Failed to send message")
+            return False
+
+        # Test simulate_message
+        await websocket.send(json.dumps({
+            "id": "4",
+            "action": "simulate_message",
+            "content": "Hi there!",
+            "protocol": "chat"
+        }))
+        
+        response = await websocket.recv()
+        data = json.loads(response)
+        if "error" in data:
+            print(f"Error in simulate_message: {data.get(\"error\")}")
+            return False
+            
+        if "result" not in data or "original_message" not in data["result"] or "llm_response" not in data["result"]:
+            print("Invalid response format for simulate_message")
+            return False
+
+        # Test deactivate_protocol
+        await websocket.send(json.dumps({
+            "id": "5",
+            "action": "deactivate_protocol",
+            "protocol_name": "chat"
+        }))
+        
+        response = await websocket.recv()
+        data = json.loads(response)
+        if "error" in data:
+            print(f"Error in deactivate_protocol: {data.get(\"error\")}")
+            return False
+            
+        if "result" not in data or "protocol" not in data["result"] or data["result"]["protocol"]["status"] != "inactive":
+            print("Failed to deactivate protocol")
+            return False
+
+        print("MCP tests passed")
+        return True
+
+result = asyncio.run(test_mcp())
+sys.exit(0 if result else 1)
+        '
+      register: mcp_test
+      failed_when: mcp_test.rc != 0
+
+    - name: Print MCP test result
+      debug:
+        var: mcp_test.stdout_lines
